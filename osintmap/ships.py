@@ -414,24 +414,31 @@ class AisstreamCollector:
                         self._prune()
 
         async def collect() -> None:
-            backoff = 5.0
-            failures = 0
+            backoff = 2.0
+            ais_next_ok = 0.0  # monotonic time before which aisstream.io may not be re-tried
             while not self._stop.is_set():
-                feed = "aisstream.io" if key and failures < 3 else "openwaters"
+                use_ais = bool(key) and time.monotonic() >= ais_next_ok
+                feed = "aisstream.io" if use_ais else "openwaters"
                 try:
-                    if feed == "aisstream.io":
+                    if use_ais:
                         await once_aisstream()
                     else:
                         await once_openwaters()
-                    backoff = 5.0
-                    failures = 0
+                    backoff = 2.0
                 except Exception as exc:  # never raise out of a collector thread
-                    failures += 1
+                    if use_ais:
+                        # aisstream has a documented habit of closing everything with no reason
+                        # (1006). One quick attempt, then an hour on Open Waters, which answers.
+                        ais_next_ok = time.monotonic() + 3600.0
+                        with self._lock:
+                            self._state, self._detail = "connecting", (
+                                f"aisstream.io: {describe_collect(exc)} — falling back to Open Waters.")
+                        continue  # straight to the working feed, no backoff sleep
                     with self._lock:
-                        self._state, self._detail = "waiting", f"{feed}: {describe_collect(exc)}"
-                if self._stop.wait(backoff):
-                    break
-                backoff = min(backoff * 2, 300.0)
+                        self._state, self._detail = "waiting", f"openwaters: {describe_collect(exc)}"
+                    if self._stop.wait(backoff):
+                        break
+                    backoff = min(backoff * 2, 300.0)
 
         asyncio.run(collect())
         with self._lock:
@@ -492,11 +499,18 @@ def stream_load() -> Callable[[], dict]:
     def load() -> dict:
         key = aisstream_key()
         _COLLECTOR.start(key)
-        state = _COLLECTOR.state()
-        if state["state"] == "connecting":
-            time.sleep(3.0)  # one polite wait so the first fetch usually has live data
-            state = _COLLECTOR.state()
+        # First fetch after a cold start: the collector has to connect (and, with a key set,
+        # survive one fast aisstream.io attempt before falling back). Poll up to ~15 s instead
+        # of one blind 3 s sleep so the first answer is usually green, not an UpstreamError.
+        deadline = time.time() + 15.0
         found = _COLLECTOR.items()
+        while not found and time.time() < deadline:
+            state = _COLLECTOR.state()
+            if state["state"] in ("idle", "stopped"):
+                break
+            time.sleep(1.5)
+            found = _COLLECTOR.items()
+        state = _COLLECTOR.state()
         if not found:
             raise UpstreamError(502, f"ships collector is {state['state']}"
                                      + (f": {state['detail']}" if state["detail"] else ""))
