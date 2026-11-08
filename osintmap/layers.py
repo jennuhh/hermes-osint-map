@@ -184,8 +184,8 @@ def _aircraft_parts(params: dict) -> list[Part]:
 
 def _ships_parts(params: dict) -> list[Part]:
     parts = [Part("ships:digitraffic", 60, "Digitraffic", ships.digitraffic_load(), _cache)]
-    if ships.aisstream_key() is not None:
-        parts.append(Part("ships:aisstream", 15, "aisstream.io", ships.aisstream_load(), _cache))
+    label = "aisstream.io" if ships.aisstream_key() is not None else "Open Waters AIS"
+    parts.append(Part("ships:stream", 15, label, ships.stream_load(), _cache))
     return parts
 
 
@@ -202,8 +202,9 @@ LAYERS: dict[str, Layer] = {layer.id: layer for layer in (
           300, lambda p: [Part("weather", 300, "the US National Weather Service", _nws, _cache)]),
     Layer("aircraft", "Aircraft", "adsb.lol", "https://adsb.lol", "adsb.lol (ODbL)", 15,
           _aircraft_parts, _aircraft_params, cap=MAX_AIRCRAFT),
-    Layer("ships", "Ships", "Digitraffic, aisstream.io", "https://www.digitraffic.fi",
-          ships.DIGITRAFFIC_ATTRIBUTION + "; aisstream.io (AIS re-broadcast)", 60,
+    Layer("ships", "Ships", "Digitraffic, aisstream.io / Open Waters", "https://www.digitraffic.fi",
+          ships.DIGITRAFFIC_ATTRIBUTION + "; aisstream.io (AIS re-broadcast) or "
+          "Open Waters AIS (aiscast; per-source terms: NLOD, CC BY 4.0, ODbL)", 60,
           _ships_parts, cap=MAX_SHIPS),
     Layer("satellites", "Satellites", "CelesTrak", "https://celestrak.org", "CelesTrak (Dr. T.S. Kelso)", 6 * 3600,
           lambda p: [Part(f"satellites:{g}", 6 * 3600, "CelesTrak", _celestrak(g), _cache) for g in SAT_GROUPS],

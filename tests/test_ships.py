@@ -1,4 +1,4 @@
-"""Ships: parsing the Digitraffic AIS feeds, flag lookup, and the aisstream collector stores."""
+"""Ships: parsing the Digitraffic AIS feeds, flag lookup, and the stream collector stores."""
 
 import time
 
@@ -115,8 +115,40 @@ def test_collector_drops_stale_positions():
     assert ships.collector_items(pos, {}) == []
 
 
+def test_openwaters_events_fill_the_same_stores():
+    pos, static = {}, {}
+    position = {"type": "event", "mmsi": 470721000, "time": "2026-11-08T00:40:57Z",
+                "msg_type": "PositionReport", "lat": 24.387, "lon": 54.501, "source": "aishub",
+                "message": {"Sog": 9.5, "Cog": 122.0, "TrueHeading": 511, "NavigationalStatus": 0}}
+    static_event = {"type": "event", "mmsi": 470721000, "msg_type": "ShipStaticData",
+                    "message": {"Name": "AL SHUWAYHAT", "Type": 70, "Destination": "AE JEA"}}
+    assert ships.parse_openwaters(position, pos, static) is True
+    assert ships.parse_openwaters(static_event, pos, static) is True
+    assert ships.parse_openwaters({"type": "welcome"}, pos, static) is False
+    assert ships.parse_openwaters({"type": "event"}, pos, static) is False  # no mmsi
+
+    items = ships.collector_items(pos, static)
+    assert len(items) == 1
+    card = items[0]
+    assert card["title"] == "AL SHUWAYHAT" and card["kind"] == "cargo" and card["country"] == "AE"
+    assert card["lat"] == 24.387 and card["lon"] == 54.501
+    assert card["heading"] == 122.0  # 511 = unavailable → course over ground
+    assert ["Destination", "AE JEA"] in card["props"]
+
+
+def test_watch_box_defaults_to_hormuz_and_validates_overrides(monkeypatch):
+    assert ships.watch_box() == ships.DEFAULT_WATCH_BOX
+    monkeypatch.setenv(ships.WATCH_BOX_ENV, "55.0,25.0,57.0,27.0")
+    assert ships.watch_box() == (55.0, 25.0, 57.0, 27.0)  # note: read through the secret scope's env fallback
+    monkeypatch.setenv(ships.WATCH_BOX_ENV, "not,a,box")
+    assert ships.watch_box() == ships.DEFAULT_WATCH_BOX
+    monkeypatch.setenv(ships.WATCH_BOX_ENV, "40.0,50.0,30.0,60.0")  # inverted: refuse
+    assert ships.watch_box() == ships.DEFAULT_WATCH_BOX
+
+
 def test_ships_layer_fetches_end_to_end(monkeypatch):
     monkeypatch.setattr(ships.http, "get_json", lambda url, **kw: LOCATIONS if "locations" in url else VESSELS)
+    monkeypatch.setattr(ships, "stream_load", lambda: lambda: {"items": []})  # keep the ws collector out of it
     monkeypatch.setattr(layers, "ships", ships)
     monkeypatch.setattr(layers, "_cache", layers.SnapshotCache(size=8))
     result = layers.fetch("ships")

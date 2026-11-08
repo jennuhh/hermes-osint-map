@@ -14,6 +14,7 @@ vessel itself broadcasts (name, type, destination, speed, course).
 
 from __future__ import annotations
 
+import os
 import threading
 import time
 from typing import Any, Callable
@@ -25,6 +26,12 @@ DIGITRAFFIC_LOCATIONS = "https://meri.digitraffic.fi/api/ais/v1/locations"
 DIGITRAFFIC_VESSELS = "https://meri.digitraffic.fi/api/ais/v1/vessels"
 AISSTREAM_WS = "wss://stream.aisstream.io/v0/stream"
 AISSTREAM_ENV = "AISSTREAM_API_KEY"
+OPENWATERS_WS = "wss://ais.openwaters.io/v1/stream"
+# Where the keyless regional stream points: minLat, minLon, maxLat, maxLon. The Strait of
+# Hormuz is the standing OSINT question (tanker traffic, the UKMTO beat); 4x4 deg fits the
+# anonymous tier's 100 sq-degree area cap with room to spare. Override with SHIPS_WATCH_BOX.
+DEFAULT_WATCH_BOX = (24.0, 54.5, 28.0, 58.5)
+WATCH_BOX_ENV = "SHIPS_WATCH_BOX"
 DIGITRAFFIC_ATTRIBUTION = "Finnish Transport Infrastructure Agency (Digitraffic, CC BY 4.0)"
 
 RETAIN_S = 6 * 3600  # keep the last report per MMSI for six hours (sparse regions accumulate)
@@ -60,10 +67,15 @@ MIDS = {
     303: "US", 305: "AG", 306: "CW", 308: "BS", 311: "BS", 312: "BZ", 314: "BB", 316: "CA",
     319: "KY", 338: "US", 341: "JM", 345: "MX", 351: "PA", 352: "PA", 353: "PA", 354: "PA",
     355: "PA", 356: "PA", 357: "PA", 370: "PA", 371: "PA", 372: "PA", 373: "PA", 374: "PA",
-    375: "PA", 376: "PA", 377: "PA", 378: "PA", 401: "CA", 403: "GL", 412: "CN", 413: "CN",
+    375: "PA", 376: "PA", 377: "PA", 378: "PA",
+    # Gulf / Central Asia (ITU Appendix 43; verified against ITU, Wikipedia and two MID tables).
+    # 401/403 were mis-filed before 2026-11-08 (Afghanistan/Saudi, not Canada/Greenland).
+    401: "AF", 403: "SA", 405: "BD", 408: "BH", 412: "CN", 413: "CN",
     414: "CN", 416: "TW", 417: "LK", 419: "IN", 422: "IR", 423: "AZ", 425: "IQ", 428: "IL",
-    431: "JP", 432: "JP", 433: "JP", 440: "KR", 441: "KR", 445: "KP", 451: "KG", 453: "MO",
-    457: "MN", 477: "HK", 478: "HK", 501: "MH", 503: "AU", 508: "CK", 510: "FM", 511: "PW",
+    431: "JP", 432: "JP", 433: "JP", 434: "TM", 436: "KZ", 437: "UZ", 438: "JO", 440: "KR",
+    441: "KR", 443: "PS", 445: "KP", 447: "KW", 450: "LB", 451: "KG", 453: "MO", 455: "MV",
+    457: "MN", 459: "NP", 461: "OM", 463: "PK", 466: "QA", 468: "SY", 470: "AE", 472: "TJ",
+    473: "YE", 475: "YE", 477: "HK", 478: "HK", 501: "MH", 503: "AU", 508: "CK", 510: "FM", 511: "PW",
     512: "NZ", 514: "TO", 515: "TO", 518: "WS", 525: "VU", 533: "MY", 536: "SG", 537: "SG",
     538: "MH", 540: "SB", 542: "FJ", 548: "PH", 553: "TH", 555: "VN", 557: "VN",
     563: "SG", 564: "SG", 565: "SG", 566: "SG", 567: "TH", 574: "VN", 577: "HK", 579: "HK",
@@ -229,6 +241,60 @@ def parse_aisstream(message: Any, pos_store: dict[int, dict], static_store: dict
     return False
 
 
+def watch_box() -> tuple[float, float, float, float]:
+    """The regional stream's box, from SHIPS_WATCH_BOX ("minLat,minLon,maxLat,maxLon") or Hormuz."""
+    raw = os.environ.get(WATCH_BOX_ENV)  # a bounding box is not a credential: plain env is fine
+    if isinstance(raw, str) and raw.count(",") == 3:
+        try:
+            lat0, lon0, lat1, lon1 = (float(part) for part in raw.split(","))
+            if -90 <= lat0 < lat1 <= 90 and -180 <= lon0 < lon1 <= 180:
+                return (lat0, lon0, lat1, lon1)
+        except ValueError:
+            pass
+    return DEFAULT_WATCH_BOX
+
+
+def parse_openwaters(event: Any, pos_store: dict, static_store: dict) -> bool:
+    """One Open Waters AIS /v1 event frame into the collector stores. Returns True if used.
+
+    Shape (their native dialect, not aisstream's): {"type": "event", "mmsi": ..., "time": ISO,
+    "msg_type": "PositionReport" | "ShipStaticData" | ..., "lat": ..., "lon": ...,
+    "message": {decoded AIS fields}}. The decoded body keeps aisstream-ish key names, so the
+    stores end up identical and collector_items() serves both feeds unchanged."""
+    if not isinstance(event, dict) or event.get("type") != "event":
+        return False
+    mmsi = event.get("mmsi")
+    if not isinstance(mmsi, int) or mmsi <= 0:
+        return False
+    body = event.get("message")
+    body = body if isinstance(body, dict) else {}
+    now = time.time()
+    msg_type = str(event.get("msg_type") or "")
+    if msg_type == "PositionReport":
+        lat, lon = event.get("lat"), event.get("lon")
+        pos_store[mmsi] = {
+            "lat": lat, "lon": lon,
+            "sog": body.get("Sog"), "cog": body.get("Cog"),
+            "heading": body.get("TrueHeading"), "navStat": body.get("NavigationalStatus"),
+            "time": _aisstream_time(event.get("time"), now), "seen": now,
+        }
+        return True
+    if "Static" in msg_type or "Voyage" in msg_type:
+        name = body.get("Name") or body.get("name")
+        static_store.setdefault(mmsi, {"seen": now})
+        known = static_store[mmsi]
+        if isinstance(name, str) and name.strip() and not known.get("name"):
+            known["name"] = name.strip()
+        for src, dst in (("Type", "shipType"), ("Destination", "destination"), ("IMO", "imo"),
+                         ("CallSign", "callSign"), ("Draught", "draught")):
+            value = body.get(src)
+            if value is not None and not known.get(dst):
+                known[dst] = value
+        known["seen"] = now
+        return True
+    return False
+
+
 def _aisstream_time(raw: Any, fallback: float) -> float:
     if isinstance(raw, str):
         try:
@@ -274,7 +340,7 @@ class AisstreamCollector:
         self._state = "idle"  # idle | connecting | live | waiting | stopped
         self._detail = ""
 
-    def start(self, key: str) -> None:
+    def start(self, key: str | None) -> None:
         with self._lock:
             if self._thread and self._thread.is_alive():
                 return
@@ -296,40 +362,73 @@ class AisstreamCollector:
         with self._lock:
             return collector_items(self._positions, self._static)
 
-    def _run(self, key: str) -> None:
+    def _run(self, key: str | None) -> None:
         import asyncio
         import json as _json
 
-        async def collect() -> None:
+        async def once_aisstream() -> None:
             import websockets
 
-            backoff = 5.0
-            while not self._stop.is_set():
-                try:
-                    async with websockets.connect(AISSTREAM_WS, open_timeout=20,
-                                                  ping_interval=25, ping_timeout=20) as ws:
-                        await ws.send(_json.dumps({
-                            "APIKey": key,
-                            "BoundingBoxes": [[[-90, -180], [90, 180]]],
-                            "FilterMessageTypes": ["PositionReport", "ShipStaticAndVoyageData"],
-                        }))
-                        backoff = 5.0
-                        with self._lock:
-                            self._state, self._detail = "live", ""
-                        while not self._stop.is_set():
-                            raw = await asyncio.wait_for(ws.recv(), timeout=75)
-                            if not raw:
-                                continue
-                            try:
-                                message = _json.loads(raw)
-                            except ValueError:
-                                continue
-                            with self._lock:
-                                parse_aisstream(message, self._positions, self._static)
-                                self._prune()
-                except Exception as exc:  # never raise out of a collector thread
+            async with websockets.connect(AISSTREAM_WS, open_timeout=20,
+                                          ping_interval=25, ping_timeout=20) as ws:
+                await ws.send(_json.dumps({
+                    "APIKey": key,
+                    "BoundingBoxes": [[[-90, -180], [90, 180]]],
+                    "FilterMessageTypes": ["PositionReport", "ShipStaticAndVoyageData"],
+                }))
+                with self._lock:
+                    self._state, self._detail = "live", ""
+                while not self._stop.is_set():
+                    raw = await asyncio.wait_for(ws.recv(), timeout=75)
+                    if not raw:
+                        continue
+                    try:
+                        message = _json.loads(raw)
+                    except ValueError:
+                        continue
                     with self._lock:
-                        self._state, self._detail = "waiting", describe_collect(exc)
+                        parse_aisstream(message, self._positions, self._static)
+                        self._prune()
+
+        async def once_openwaters() -> None:
+            import websockets
+
+            box = watch_box()
+            async with websockets.connect(OPENWATERS_WS, open_timeout=20,
+                                          ping_interval=25, ping_timeout=20) as ws:
+                # Their native dialect: bbox = [minLat, minLon, maxLat, maxLon]; snapshot replays
+                # the last known state of every vessel already in the box, so the map is never empty.
+                await ws.send(_json.dumps({"type": "subscribe", "bbox": [list(box)], "snapshot": True}))
+                with self._lock:
+                    self._state, self._detail = "live", ""
+                while not self._stop.is_set():
+                    raw = await asyncio.wait_for(ws.recv(), timeout=75)
+                    if not raw:
+                        continue
+                    try:
+                        message = _json.loads(raw)
+                    except ValueError:
+                        continue
+                    with self._lock:
+                        parse_openwaters(message, self._positions, self._static)
+                        self._prune()
+
+        async def collect() -> None:
+            backoff = 5.0
+            failures = 0
+            while not self._stop.is_set():
+                feed = "aisstream.io" if key and failures < 3 else "openwaters"
+                try:
+                    if feed == "aisstream.io":
+                        await once_aisstream()
+                    else:
+                        await once_openwaters()
+                    backoff = 5.0
+                    failures = 0
+                except Exception as exc:  # never raise out of a collector thread
+                    failures += 1
+                    with self._lock:
+                        self._state, self._detail = "waiting", f"{feed}: {describe_collect(exc)}"
                 if self._stop.wait(backoff):
                     break
                 backoff = min(backoff * 2, 300.0)
@@ -348,10 +447,12 @@ class AisstreamCollector:
 def describe_collect(exc: BaseException) -> str:
     name = type(exc).__name__
     if "Timeout" in name or isinstance(exc, TimeoutError):
-        return "aisstream.io took too long to answer."
+        return "the AIS stream took too long to answer."
     if "InvalidHandshake" in name or "ConnectionClosed" in name or isinstance(exc, ConnectionError):
-        return "aisstream.io closed the connection; retrying."
-    return f"aisstream.io collector stopped on {name}; retrying."
+        reason = getattr(exc, "rcvd", None)
+        note = f" ({reason.reason.decode(errors='replace')[:80]})" if reason and getattr(reason, "reason", None) else ""
+        return f"the AIS stream closed the connection{note}; retrying."
+    return f"the AIS collector stopped on {name}; retrying."
 
 
 _COLLECTOR = AisstreamCollector()
@@ -385,11 +486,11 @@ def digitraffic_load() -> Callable[[], dict]:
     return load
 
 
-def aisstream_load() -> Callable[[], dict]:
+def stream_load() -> Callable[[], dict]:
+    """The collector part of the ships layer: aisstream.io worldwide when a key is set,
+    otherwise the keyless Open Waters regional stream (default box: Strait of Hormuz)."""
     def load() -> dict:
         key = aisstream_key()
-        if key is None:
-            raise UpstreamError(502, "aisstream key vanished mid-session.")
         _COLLECTOR.start(key)
         state = _COLLECTOR.state()
         if state["state"] == "connecting":
@@ -397,7 +498,7 @@ def aisstream_load() -> Callable[[], dict]:
             state = _COLLECTOR.state()
         found = _COLLECTOR.items()
         if not found:
-            raise UpstreamError(502, f"aisstream collector is {state['state']}"
+            raise UpstreamError(502, f"ships collector is {state['state']}"
                                      + (f": {state['detail']}" if state["detail"] else ""))
         return {"items": found}
     return load
