@@ -35,7 +35,7 @@ SCHEMAS = {
     "osint_situation": _schema(
         "osint_situation",
         "A current world situation brief from public sources: item counts and the most severe items per map layer "
-        "(earthquakes, natural events, disaster alerts, US severe weather, military aircraft, news incidents), "
+        "(earthquakes, natural events, disaster alerts, US severe weather, military aircraft, ship traffic, news incidents), "
         "the planetary Kp index and the top headlines. News incidents are machine-coded from news coverage (GDELT): "
         "they show where reporting is, not verified events. Takes no arguments; the first call can take ~20 s.",
         {},
@@ -43,7 +43,8 @@ SCHEMAS = {
     "osint_events": _schema(
         "osint_events",
         "List current map items, most severe first, filtered by layer, country and/or a point and radius. "
-        "Items in the incidents layer are machine-coded from news coverage (GDELT), not verified events.",
+        "Items in the incidents layer are machine-coded from news coverage (GDELT), not verified events. "
+        "The ships layer covers the Baltic Sea by default; it gains worldwide coverage when an aisstream.io key is set.",
         {
             "layer": {"type": "string", "enum": list(layers.LAYERS),
                       "description": "One layer; omit for every layer except satellites."},
@@ -95,7 +96,8 @@ SCHEMAS = {
             "lon": {"type": "number", "description": "Longitude of the centre point (needs lat)."},
             "radius_km": {"type": "number", "description": "Radius around lat/lon in km (default 500, max 5000)."},
             "layers": {"type": "array", "items": {"type": "string", "enum": list(layers.LAYERS)},
-                       "description": "Layers to watch; default quakes, disasters, natural, weather, aircraft."},
+                       "description": "Layers to watch; default quakes, disasters, natural, weather, aircraft. "
+                                      "Ships is available but not a default: an area watch that includes it reports every vessel."},
             "min_magnitude": {"type": "number", "description": "Smallest earthquake magnitude to report (default 4.5)."},
             "min_alert_level": {"type": "string", "enum": ["green", "orange", "red"],
                                 "description": "Lowest GDACS disaster alert level to report (default orange)."},

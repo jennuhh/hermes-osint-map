@@ -46,6 +46,7 @@ CALLS = [
     ("layer weather", lambda: api.layer("weather")),
     ("layer aircraft (mil)", lambda: api.layer("aircraft")),
     ("layer aircraft (point)", lambda: api.layer("aircraft", lat="51.47", lon="-0.45", radius="60")),
+    ("layer ships", lambda: api.layer("ships")),
     ("layer satellites", lambda: api.layer("satellites")),
     ("layer incidents", lambda: api.layer("incidents")),
     ("layer chokepoints", lambda: api.layer("chokepoints")),

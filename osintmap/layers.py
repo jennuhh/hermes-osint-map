@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Callable
 
-from . import cameras, chokepoints, gdelt, http, parsers
+from . import cameras, chokepoints, gdelt, http, parsers, ships
 from .http import SnapshotCache, UpstreamError
 
 USGS_DAY = "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/2.5_day.geojson"
@@ -35,6 +35,7 @@ SAT_GROUPS = ("stations", "gps-ops", "weather", "military")
 MAX_ITEMS = 5000
 MAX_AIRCRAFT = 3000
 MAX_SATELLITES = 400
+MAX_SHIPS = 4000
 MAX_RADIUS_NM = 250
 DEFAULT_RADIUS_NM = 100
 
@@ -181,6 +182,13 @@ def _aircraft_parts(params: dict) -> list[Part]:
     return parts
 
 
+def _ships_parts(params: dict) -> list[Part]:
+    parts = [Part("ships:digitraffic", 60, "Digitraffic", ships.digitraffic_load(), _cache)]
+    if ships.aisstream_key() is not None:
+        parts.append(Part("ships:aisstream", 15, "aisstream.io", ships.aisstream_load(), _cache))
+    return parts
+
+
 LAYERS: dict[str, Layer] = {layer.id: layer for layer in (
     Layer("quakes", "Earthquakes", "USGS", "https://earthquake.usgs.gov", "USGS (public domain)", 60,
           lambda p: [Part("quakes:day", 60, "USGS", _usgs(USGS_DAY), _cache),
@@ -194,6 +202,9 @@ LAYERS: dict[str, Layer] = {layer.id: layer for layer in (
           300, lambda p: [Part("weather", 300, "the US National Weather Service", _nws, _cache)]),
     Layer("aircraft", "Aircraft", "adsb.lol", "https://adsb.lol", "adsb.lol (ODbL)", 15,
           _aircraft_parts, _aircraft_params, cap=MAX_AIRCRAFT),
+    Layer("ships", "Ships", "Digitraffic, aisstream.io", "https://www.digitraffic.fi",
+          ships.DIGITRAFFIC_ATTRIBUTION + "; aisstream.io (AIS re-broadcast)", 60,
+          _ships_parts, cap=MAX_SHIPS),
     Layer("satellites", "Satellites", "CelesTrak", "https://celestrak.org", "CelesTrak (Dr. T.S. Kelso)", 6 * 3600,
           lambda p: [Part(f"satellites:{g}", 6 * 3600, "CelesTrak", _celestrak(g), _cache) for g in SAT_GROUPS],
           cap=MAX_SATELLITES),

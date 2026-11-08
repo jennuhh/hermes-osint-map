@@ -70,6 +70,12 @@ function drawShape(g, shape, x, y, r, heading) {
       const p = (ang, len) => [x + Math.cos(a + ang) * len, y + Math.sin(a + ang) * len]
       g.moveTo(...p(0, r * 1.2)); g.lineTo(...p(2.5, r)); g.lineTo(...p(Math.PI, r * 0.35)); g.lineTo(...p(-2.5, r)); g.closePath(); break
     }
+    case SHAPES.ship: {  // hull: pointed bow, parallel sides, flat stern
+      const a = ((heading ?? 0) - 90) * DEG
+      const p = (ang, len) => [x + Math.cos(a + ang) * len, y + Math.sin(a + ang) * len]
+      g.moveTo(...p(0, r * 1.15)); g.lineTo(...p(1.03, r * 0.58)); g.lineTo(...p(2.63, r * 1.03));
+      g.lineTo(...p(-2.63, r * 1.03)); g.lineTo(...p(-1.03, r * 0.58)); g.closePath(); break
+    }
     case SHAPES.plus:
       g.rect(x - r, y - r * 0.28, r * 2, r * 0.56); g.rect(x - r * 0.28, y - r, r * 0.56, r * 2); break
     case SHAPES.hexagon:

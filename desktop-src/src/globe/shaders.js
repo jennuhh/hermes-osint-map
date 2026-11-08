@@ -230,7 +230,7 @@ void main() {
   float h = aStyle.w;
   vec2 dirUp = up * cos(h) + vec2(up.y, -up.x) * sin(h);   // rotate clockwise by heading
   vec2 dirRight = vec2(dirUp.y, -dirUp.x);
-  bool oriented = aStyle.x > 3.5 && aStyle.x < 4.5;
+  bool oriented = (aStyle.x > 3.5 && aStyle.x < 4.5) || aStyle.x > 8.5;  // dart (aircraft), ship
   if (!oriented) {
     dirUp = vec2(0.0, 1.0);
     dirRight = vec2(1.0, 0.0);
@@ -277,6 +277,13 @@ float shapeNorm(vec2 p, int s) {
     return max(q.x * 0.866 + q.y * 0.5, q.y) * 1.12;
   }
   if (s == 8) return max(abs(p.x), abs(p.y)) * 1.15;                                // 8: frame (hollow square)
+  if (s == 9) {                                                                     // 9: ship, bow along heading
+    vec2 q = vec2(abs(p.x), p.y);
+    float bow = q.x * 0.95 + max(q.y, 0.0);
+    float side = q.x * 2.1;
+    float stern = max(-q.y, 0.0) * 1.15;
+    return max(max(bow, side), stern);
+  }
   return length(p);                                                                 // 7: ring (drawn hollow)
 }
 

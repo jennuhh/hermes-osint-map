@@ -1,7 +1,7 @@
 // The map's layers as the page sees them: how each looks (shape + theme colour, so layers never
 // depend on colour alone), how fast it ages, and how a backend item becomes a globe marker.
 
-export const SHAPES = { circle: 0, diamond: 1, triangle: 2, square: 3, dart: 4, plus: 5, hexagon: 6, ring: 7, frame: 8 }
+export const SHAPES = { circle: 0, diamond: 1, triangle: 2, square: 3, dart: 4, plus: 5, hexagon: 6, ring: 7, frame: 8, ship: 9 }
 
 const H = 3600_000
 
@@ -22,6 +22,8 @@ export const LAYERS = [
     hint: 'GDELT: protests, fighting, assaults and threats as coded automatically from news coverage, last 3 hours. Shows where reporting is, not verified events' },
   { id: 'aircraft', label: 'Aircraft', shape: 'dart', cssVar: '--ui-cyan', fallbackVar: '--ui-blue', fadeAfter: null, size: [6, 8],
     hint: 'adsb.lol: military aircraft worldwide, plus all traffic near the centre of the view when zoomed in' },
+  { id: 'ships', label: 'Ships', shape: 'ship', cssVar: '--ui-green', fallbackVar: '--ui-blue', fadeAfter: null, size: [4.5, 7],
+    hint: 'AIS ship traffic: Finnish Digitraffic (Baltic Sea) by default, worldwide with an aisstream.io key. Each marker points along the vessel\'s course over ground' },
   { id: 'satellites', label: 'Satellites', shape: 'plus', cssVar: '--ui-purple', fallbackVar: '--ui-accent', fadeAfter: null, size: [5, 5],
     hint: 'CelesTrak orbital elements, positions computed live (SGP4)' },
   { id: 'cameras', label: 'Traffic cameras', shape: 'frame', cssVar: '--ui-warm', fallbackVar: '--ui-text-secondary', fadeAfter: null, size: [3.5, 3.5],

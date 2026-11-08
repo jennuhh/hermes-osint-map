@@ -18,14 +18,21 @@ passes this filter. Adolanium's plugin currently has no person-tracking surface;
   `simplifaisoul/osiris` (the 11.5k-star original) has a pump.fun address in its repo
   description — provenance-contaminated, do not touch.
 
-## Phase 1 — Ships (the layer tonight proved we need)
-- **Feed:** aisstream.io WebSocket AIS (free API key; both GEV and OSIRIS converged on it).
-- Free key goes in plugin secrets (`agent.secret_scope`), same pattern as Twelve Data.
-- Ship glyphs must use true-heading projection (see Phase 3) or they're meaningless.
-- Position retention: cache ~6h per MMSI (OSIRIS pattern) so sparse regions accumulate history.
-- Vessel cards: name, MMSI→flag, AIS ship-type, speed, course, destination when broadcast.
-- Test target: Strait of Hormuz tanker traffic + UKMTO advisory incidents.
-- PR candidate upstream: YES (neutral, useful to everyone).
+## Phase 1 — Ships (the layer tonight proved we need) — BUILT 2026-11-07
+- **Status: DONE (Baltic live, global awaiting key).** Layer `ships` registered, 310 python tests +
+  20 desktop tests green, desktop bundle rebuilt with a dedicated hull glyph (shape 9, points along course).
+- **Feed A (live now, keyless):** Finnish Digitraffic open AIS — `meri.digitraffic.fi/api/ais/v1`
+  (positions + vessel metadata), CC BY 4.0, ~900 vessels.gzip required. `osintmap/ships.py`.
+- **Feed B (awaiting free key):** aisstream.io WebSocket collector — daemon thread, asyncio ws,
+  6 h per-MMSI retention, name/type fallback from position reports. Activates when
+  `AISSTREAM_API_KEY` is set in the plugin's secret scope (plugin.yaml config_schema).
+  GOTCHA verified in code: aisstream puts the fix in `MetaData.latitude/longitude` (lowercase)
+  + `ShipName`, NOT in `PositionReport.Latitude`.
+- MMSI MID→flag table is deliberately partial (top ~150 flags); an unknown MID gets no country, no guess.
+- Heading: true heading when valid (511 = unavailable), else course over ground. Sog 102.3 → null.
+- Ships is NOT in watch defaults (an area watch would report every vessel); it is selectable by name.
+- Test target when the key lands: Strait of Hormuz tanker traffic + UKMTO advisory incidents.
+- PR candidate upstream: YES (keyless Baltic-only core is neutral and useful to everyone).
 
 ## Phase 2 — Fires (NASA FIRMS)
 - **Feed:** NASA FIRMS API (free MAP_KEY; data CC0/public domain). VIIRS S-NPP/NOAA-20/21 + MODIS 24h detections.
